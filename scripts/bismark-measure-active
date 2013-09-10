@@ -1,0 +1,314 @@
+#!/bin/ash
+# Executes a measurement cycle
+# 
+# author: walter.dedonato@unina.it
+# modified by srikanth@gatech.edu
+
+# Load configuration file
+. /etc/bismark/bismark.conf
+. "$BROOT"/etc/bismark/bismark-active.conf
+. /usr/lib/bismark/functions.inc.sh
+
+# Configuration
+COUNTER="/tmp/bismark/var/counter"
+MEASURE_REPLY="/tmp/bismark/var/mreply"
+XML_FILE="/tmp/bismark/active/${DEVICE_ID}_$(date +%s).xml"
+
+# --- Functions ---
+
+# Measure message generator
+# $1 = options
+msg () 
+{
+	echo "$DEVICE_ID measure $1"
+	sleep 3
+}
+
+# Get target info
+# $1 = category
+# $2 = type
+# $3 = zone
+# $4 = duration
+# Outputs: 
+# $dst, $info and $wait
+get_target ()
+{
+	# Select probe port
+	if [ -e /tmp/bismark/var/port_counter ]; then
+		read port_counter < /tmp/bismark/var/port_counter
+		PROBE_PORT=$(echo $PROBE_PORTS | awk '{print $'$((port_counter + 1))'}')
+	else
+		PROBE_PORT=5353
+	fi
+
+	# Send message
+	msg "$1 $2 $3 $4" | nc -u $NC_OPTS $SERVER $PROBE_PORT > $MEASURE_REPLY
+
+	# Get reply
+	read dst info wait < $MEASURE_REPLY 
+	[ $dst ] || return 1 
+}
+
+# --- Main ---
+
+"$BROOT"/usr/bin/bismark-sysctl
+# Light "test in progess" LED (orange WPS led)
+if [ -e /sys/devices/platform/leds-gpio/leds/wndr3700:orange:wps/brightness ]; then
+	echo 1 > /sys/devices/platform/leds-gpio/leds/wndr3700:orange:wps/brightness
+fi
+
+# Create dirs and files
+mkdir -p /tmp/bismark/active
+mkdir -p /tmp/bismark/data
+mkdir -p /tmp/bismark/active/gdptr
+[ -e $COUNTER ] || echo 0 > $COUNTER
+
+# Get and update count
+count=$(cat $COUNTER)
+echo $(( (count + 1) % ACTIVE_ROLLOVER)) > $COUNTER
+count=$(( count + 1 ))
+# Random wait
+sleep $(random 0 3)
+
+# Get source IP
+get_ip
+
+# XML file header
+cat > $XML_FILE <<-end
+	<?xml version="3.0" encoding="UTF-8" standalone="yes"?>
+	<measurements version="1.3">
+	        <info deviceid="$DEVICE_ID" />
+end
+
+## Concurrent measurements using paris-traceroute
+if [ $((count % PTR_UP_FQ)) -eq 0 ] ; then
+	# Paris Traceroute to list and nearest MLAB server
+	get_target Bismark TR $ZONE 0
+	for srv in $( echo $dst | grep -shv ^# "$BROOT"/bismark/paristraceroute_targets.list - | grep -v ^$ | sort -u ); do
+		( "$BROOT"/usr/bin/bismark-ptr $srv > /tmp/bismark/active/gdptr/$srv ) &
+	done
+	wait
+
+	# Reading $srv (forward traceroute) file and parsing into XML file
+	for filename in $( ls "$BROOT"/bismark/active/gdptr/ ); do
+		hops_cnt=$( cat "$BROOT"/bismark/active/gdptr/$filename | wc -l )
+		if [ $hops_cnt -gt 0 ] ; then
+			cat >> $XML_FILE <<-end
+			        <traceroute srcip="$src" dstip="$filename" timestamp="$(date +%s)" hops="$hops_cnt" direction="up" toolid="paristraceroute">
+			end
+			cat "$BROOT"/bismark/active/gdptr/$filename | awk '{ print "                " $0 }' | cat >> $XML_FILE
+			cat >> $XML_FILE <<-end
+			        </traceroute>
+			end
+		fi
+	done
+	wait
+
+	# clean up
+	rm -f /tmp/bismark/active/gdptr/*
+
+fi
+
+if [ $(( (count + P_MOFFSET) % PTR_DW_FQ)) -eq 0 ] ; then
+	# Reverse paris Traceroute from list and nearest MLAB server
+	get_target Bismark RTR $ZONE 0
+	for srv in $( echo $dst | grep -shv ^# "$BROOT"/bismark/paristraceroute_targets.list - | grep -v ^$ | sort -u ); do
+		( "$BROOT"/usr/bin/bismark-rptr $srv $RPTR_PORT > /tmp/bismark/active/gdptr/$srv ) &
+	done
+	wait
+
+	# Reading $srv (reverse traceroute) file and parsing into XML file
+	for filename in $( ls "$BROOT"/bismark/active/gdptr/ ); do
+		hops_cnt=$(cat /tmp/bismark/active/gdptr/$filename | wc -l)
+		if [ $hops_cnt -gt 0 ] ; then
+			cat >> $XML_FILE <<-end
+			        <traceroute srcip="$filename" dstip="$src" timestamp="$(date +%s)" hops="$hops_cnt" direction="dw" toolid="paristraceroute">
+			end
+			cat "$BROOT"/bismark/active/gdptr/$filename | awk '{ print "                " $0 }' | cat >> $XML_FILE
+			cat >> $XML_FILE <<-end
+			        </traceroute>
+			end
+		fi
+	done
+	wait
+
+	# clean up
+	rm -f /tmp/bismark/active/gdptr/*
+fi
+
+## Concurrent measurements ##
+if [ $((count % TR_UP_FQ)) -eq 0 ]; then
+	# Traceroute
+	if get_target Bismark TR $ZONE 0 ; then
+		hops=$("$BROOT"/usr/bin/bismark-tr $dst)
+		hops_cnt=$(echo "$hops" | wc -l)
+		if [ $hops_cnt -gt 0 ]; then
+			cat >> $XML_FILE <<-end
+			        <traceroute srcip="$src" dstip="$dst" timestamp="$(date +%s)" hops="$hops_cnt" direction="up">
+				$(echo "$hops" | awk '{ print "                " $0 }')
+			        </traceroute>
+			end
+		fi
+		gwip=$(cat /tmp/bismark/active/gwip)
+	fi
+fi
+
+if [ $(( (count + MOFFSET) % TR_DW_FQ)) -eq 0 ]; then
+	# Reverse traceroute
+	if get_target Bismark RTR $ZONE 0 ; then
+		hops=$("$BROOT"/usr/bin/bismark-rtr $dst $info)
+		hops_cnt=$(echo "$hops" | wc -l)
+		if [ $hops_cnt -gt 0 ]; then
+			cat >> $XML_FILE <<-end
+			        <traceroute srcip="$dst" dstip="$src" timestamp="$(date +%s)" hops="$hops_cnt" direction="dw">
+				$(echo "$hops" | awk '{ print "                " $0 }')
+			        </traceroute>
+			end
+		fi
+	fi
+fi
+
+# Get Gateway IP
+if [ ! "$gwip" ]; then
+	"$BROOT"/usr/bin/bismark-tr "8.8.8.8" > /dev/null
+	[ -e /tmp/bismark/active/gwip ] && gwip=$(cat /tmp/bismark/active/gwip)
+fi
+
+# RTT measurements using PING
+if get_target Bismark PING $ZONE 10 ; then
+	# Last mile RTT
+	if [ "$gwip" ]; then
+		"$BROOT"/usr/bin/bismark-ping $gwip | "$BROOT"/usr/bin/bismark-mstats LMRTT PING $src $gwip > /tmp/bismark/active/lmrtt ; cat /tmp/bismark/active/lmrtt >> $XML_FILE
+	fi
+
+	# Geo-distributed servers RTT
+	if [ $USE_FPING -eq 0 ]; then
+		mkdir -p /tmp/bismark/active/gdrtt
+		for srv in $dst $(grep -shv ^# "$BROOT"/usr/lib/bismark/ping_targets.list /tmp/bismark/ping_targets.list | sort -u); do
+			( "$BROOT"/usr/bin/bismark-ping $srv | "$BROOT"/usr/bin/bismark-mstats RTT PING $src $srv > /tmp/bismark/active/gdrtt/$srv ; cat /tmp/bismark/active/gdrtt/$srv >> $XML_FILE ) &
+		done
+		wait
+	else
+		grep -shv ^# "$BROOT"/usr/lib/bismark/ping_targets.list /tmp/bismark/ping_targets.list | sort -u > /tmp/bismark/active/fping_list
+		echo $dst >> /tmp/bismark/active/fping_list
+		"$BROOT"/usr/bin/bismark-fping /tmp/bismark/active/fping_list $src >> $XML_FILE
+		rm /tmp/bismark/active/fping_list
+	fi
+
+	# MServer RTT
+	if [ $count -eq 10 ]; then
+		"$BROOT"/usr/bin/bismark-fping /tmp/bismark/mservers.list $src MSERVER_RTT >> $XML_FILE
+	fi
+	#"$BROOT"/usr/bin/bismark-ping $dst | "$BROOT"/usr/bin/bismark-mstats RTT PING $src $dst >> $XML_FILE 
+fi
+
+# DNS delay and failure
+if [ $((count % DNS_FQ)) -eq 0 ]; then
+	"$BROOT"/usr/bin/bismark-dns >> $XML_FILE
+fi
+
+## Serial measurements ##
+if [ ! -e /tmp/bismark/var/mlock ]; then 
+	# Set measure lock
+	echo $(date +%s) > /tmp/bismark/var/mlock
+	# Bitrate
+	if [ $(( (count + MOFFSET) % BR_DW_FQ)) -eq 0 ]; then
+		# Downstream bitrate using NETPERF
+		NTHREADS=`echo $NETPERF_DW_NTHREADS | awk '{print $(('$(( (count + MOFFSET) / BR_DW_FQ))' % NF) + 1)}'`
+		if get_target Bismark NETPERF $ZONE $BR_DW_DURATION ; then
+			if [ $wait -lt $MAX_MEASURE_WAIT ]; then
+				sleep $wait
+				dir="dw"
+				( sleep 3 ; "$BROOT"/usr/bin/bismark-ping $dst | "$BROOT"/usr/bin/bismark-mstats ULRTTDW PING $src $dst $dir >> $XML_FILE ) &
+				"$BROOT"/usr/bin/bismark-netperf $BR_DW_DURATION $NTHREADS $dst $info dw > /tmp/bismark/active/netperf-out
+				cat /tmp/bismark/active/netperf-out | "$BROOT"/usr/bin/bismark-mstats BITRATE NETPERF_${NTHREADS} $dst $src $dir | grep -v nan >> $XML_FILE
+				cat /tmp/bismark/active/iface-out | "$BROOT"/usr/bin/bismark-mstats AGGL3BITRATE IFACE $dst $src $dir | grep -v nan >> $XML_FILE
+				rm /tmp/bismark/active/netperf-out
+				rm /tmp/bismark/active/iface-out
+			fi
+		fi
+	fi
+
+	if [ $((count % BR_UP_FQ)) -eq 0 ]; then
+		# Upstream bitrate using NETPERF
+		NTHREADS=`echo $NETPERF_UP_NTHREADS | awk '{print $(('$((count / BR_UP_FQ))' % NF) + 1)}'`
+		if get_target Bismark NETPERF $ZONE $BR_UP_DURATION ; then
+			if [ $wait -lt $MAX_MEASURE_WAIT ]; then
+				sleep $wait
+				dir="up"
+				( sleep 3 ; "$BROOT"/usr/bin/bismark-ping $dst | "$BROOT"/usr/bin/bismark-mstats ULRTTUP PING $src $dst $dir >> $XML_FILE ) &
+				"$BROOT"/usr/bin/bismark-netperf $BR_UP_DURATION $NTHREADS $dst $info up > /tmp/bismark/active/netperf-out
+				cat /tmp/bismark/active/netperf-out | "$BROOT"/usr/bin/bismark-mstats BITRATE NETPERF_${NTHREADS} $src $dst $dir | grep -v nan >> $XML_FILE
+				cat /tmp/bismark/active/iface-out | "$BROOT"/usr/bin/bismark-mstats AGGL3BITRATE IFACE $src $dst $dir | grep -v nan >> $XML_FILE
+				rm /tmp/bismark/active/netperf-out
+				rm /tmp/bismark/active/iface-out
+			fi
+		fi
+	fi
+
+	# Jitter & Packet loss using DITG
+	if [ $(( (count + MOFFSET) % UDP_DW_FQ)) -eq 0 ]; then
+		# Downstream 
+		if get_target Bismark ITGDL $ZONE $UDP_DURATION ; then
+			if [ $wait -lt $MAX_MEASURE_WAIT ]; then
+				sleep $wait
+				"$BROOT"/usr/bin/bismark-ditg udp $dst $info dw $UDP_DURATION $UDP_PPS >> $XML_FILE
+			fi
+		fi
+	fi
+	if [ $((count % UDP_UP_FQ)) -eq 0 ]; then
+		# Upstream
+		if get_target Bismark ITGUL $ZONE $UDP_DURATION ; then
+			if [ $wait -lt $MAX_MEASURE_WAIT ]; then
+				sleep $wait
+				"$BROOT"/usr/bin/bismark-ditg udp $dst $info up $UDP_DURATION $UDP_PPS >> $XML_FILE
+			fi
+		fi
+	fi
+
+	# Shaper probe
+	if [ $((count % SP_FQ)) -eq 0 ]; then
+		if get_target Bismark SP $ZONE 150 ; then
+			if [ $wait -lt $MAX_MEASURE_WAIT ]; then
+				sleep $wait
+				"$BROOT"/usr/bin/bismark-sp $dst $info >> $XML_FILE
+			fi
+		fi
+	fi
+
+	# Release measure lock
+	rm /tmp/bismark/var/mlock
+else
+	# Check lock
+	locktime=$(cat /tmp/bismark/var/mlock)
+	currtime=$(date +%s)
+	if [ $((currtime - locktime)) -gt 400  ]; then
+		killall netperf prober ITGRecv ITGSend
+		rm /tmp/bismark/var/mlock
+	fi
+fi
+
+# XML file footer
+sleep 5
+cat >> $XML_FILE <<-end
+	</measurements>
+end
+
+#pkill ITG
+for i in `ps | grep ITG[SR]| awk '{print $1}'`; do kill -9 $i; done
+# Move file to data folder
+mv $XML_FILE /tmp/bismark/data
+
+# Upload result
+[ -e /tmp/bismark/ssh ] || { 
+	echo -e '#!/bin/ash\nexec ssh -y "$@"' > /tmp/bismark/ssh 
+	chmod +x /tmp/bismark/ssh 
+}
+
+# Extinguish "test in progess" LED
+if [ -e /sys/devices/platform/leds-gpio/leds/wndr3700:orange:wps/brightness ]; then
+	echo 0 > /sys/devices/platform/leds-gpio/leds/wndr3700:orange:wps/brightness
+fi
+#scp -S "/tmp/bismark/ssh" -i $SSH_KEY /tmp/bismark/data/*.xml $USER@$SERVER:var/data/test/ 
+mv /tmp/bismark/data/*.xml /tmp/bismark-uploads/active
+#&& rm /tmp/bismark/data/*.xml
