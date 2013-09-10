@@ -9,18 +9,18 @@
 
 utime=`awk -F'[ .]' '{print $1}' /proc/uptime`
 LOCKFILE=/tmp/bismark/var/measurelock  # lockfile for bismark-measure-wrapper
-MLOCKFILE=/tmp/bismark/var/mlock  # lockfile for server-scheduled tests run by bismark-measure-active
 
 if [ -e $LOCKFILE ]; then
-	ntime=`date +%s`
-	ctime=`cat $LOCKFILE`
-	if [ $((ntime - ctime)) -gt $MAX_TEST_DURATION ]; then
-		kill -9 `ps aux | grep bismark-measure-active | awk -F" " '!/grep/{print $1}'`
-		kill -9 `ps aux | grep "$DEVICE_ID".sh | awk -F" " '!/grep/{print $1}'`
-		rm $LOCKFILE $MLOCKFILE /tmp/bismark/data/* /tmp/bismark/active/*.xml
-	fi
+    ntime=`date +%s`
+    ctime=`cat $LOCKFILE`
+    if [ $((ntime - ctime)) -gt $MAX_TEST_DURATION ]; then
+        pkill -9 -f bismark-measurement-active
+        pkill -9 -f ${DEVICE_ID}.sh
+        rm $LOCKFILE /tmp/bismark/data/* /tmp/bismark/active/*.xml
+        expire_active_measurements_lock
+    fi
 else
-	if [ $(( (utime/60)%ACTIVE_MEASUREMENT_FQ )) -eq 0 ]; then
+    if [ $(( (utime/60)%ACTIVE_MEASUREMENT_FQ )) -eq 0 ]; then
         #wget -O /tmp/bismark/local-active.conf $ACTIVE_CONF_URL
         dl_file $ACTIVE_CONF_URL /tmp/bismark/local-active.conf
         #wget -O /tmp/bismark/ping_targets.list $PING_TARGETS_URL
@@ -30,13 +30,13 @@ else
         dl_file $MSERVERS_URL /tmp/bismark/mservers.list 
         dl_file $PTR_TARGETS_URL /tmp/bismark/paristraceroute_targets.list
         dl_file $SYSCTL_URL /tmp/bismark/sysctl.conf
-		date +%s > $LOCKFILE
-		"$BROOT"/usr/bin/bismark-measure-active
-		rm $LOCKFILE
-	fi
-	if [ $(( (utime/60)%SCRIPT_MEASUREMENT_FQ )) -eq 0 ]; then
-		date +%s > $LOCKFILE
-		/tmp/bismark/"$DEVICE_ID".sh
-		rm $LOCKFILE
-	fi
+        date +%s > $LOCKFILE
+        "$BROOT"/usr/bin/bismark-measure-active
+        rm $LOCKFILE
+    fi
+    if [ $(( (utime/60)%SCRIPT_MEASUREMENT_FQ )) -eq 0 ]; then
+        date +%s > $LOCKFILE
+        /tmp/bismark/"$DEVICE_ID".sh
+        rm $LOCKFILE
+    fi
 fi
