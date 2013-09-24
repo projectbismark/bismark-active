@@ -275,7 +275,7 @@ if acquire_active_measurements_lock netperf prober ITGRecv ITGSend; then
 	fi
 
 	# Release measure lock
-	release_active_measurments_lock
+	release_active_measurements_lock
 else
 	# Check if lock has expired
 	expire_active_measurements_lock
