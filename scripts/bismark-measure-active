@@ -136,38 +136,6 @@ if [ $(( (count + P_MOFFSET) % PTR_DW_FQ)) -eq 0 ] ; then
 	rm -f /tmp/bismark/active/gdptr/*
 fi
 
-## Concurrent measurements ##
-if [ $((count % TR_UP_FQ)) -eq 0 ]; then
-	# Traceroute
-	if get_target Bismark TR $ZONE 0 ; then
-		hops=$("$BROOT"/usr/bin/bismark-tr $dst)
-		hops_cnt=$(echo "$hops" | wc -l)
-		if [ $hops_cnt -gt 0 ]; then
-			cat >> $XML_FILE <<-end
-			        <traceroute srcip="$src" dstip="$dst" timestamp="$(date +%s)" hops="$hops_cnt" direction="up">
-				$(echo "$hops" | awk '{ print "                " $0 }')
-			        </traceroute>
-			end
-		fi
-		gwip=$(cat /tmp/bismark/active/gwip)
-	fi
-fi
-
-if [ $(( (count + MOFFSET) % TR_DW_FQ)) -eq 0 ]; then
-	# Reverse traceroute
-	if get_target Bismark RTR $ZONE 0 ; then
-		hops=$("$BROOT"/usr/bin/bismark-rtr $dst $info)
-		hops_cnt=$(echo "$hops" | wc -l)
-		if [ $hops_cnt -gt 0 ]; then
-			cat >> $XML_FILE <<-end
-			        <traceroute srcip="$dst" dstip="$src" timestamp="$(date +%s)" hops="$hops_cnt" direction="dw">
-				$(echo "$hops" | awk '{ print "                " $0 }')
-			        </traceroute>
-			end
-		fi
-	fi
-fi
-
 # Get Gateway IP
 if [ ! "$gwip" ]; then
 	"$BROOT"/usr/bin/bismark-tr "8.8.8.8" > /dev/null
