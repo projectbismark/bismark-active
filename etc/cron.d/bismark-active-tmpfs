@@ -1,0 +1,2 @@
+* * * * * /tmp/usr/bin/bismark-measure-wrapper
+0 */12 * * * /usr/bin/bismark-action scriptupdate
