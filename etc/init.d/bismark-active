@@ -60,11 +60,11 @@ case "$1" in
         stop
         ;;
   status)
-        #do_status
+        status
         exit $?
         ;;
   *)   
-        echo "Usage: bismark-active [start|stop|restart]" >&2
+        echo "Usage: bismark-active [start|stop|status|restart]" >&2
         exit 3
         ;;
 esac
