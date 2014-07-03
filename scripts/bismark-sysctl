@@ -1,4 +1,4 @@
-#!/bin/ash
+#!/bin/sh
 # Device sysctl settings
 # Reads /etc/bismark/sysctl.conf and /tmp/bismark/sysctl.conf
 # and sets sysctl
@@ -11,6 +11,6 @@
 files=$BROOT"/etc/bismark/sysctl.conf /tmp/bismark/sysctl.conf"
 for file in $files; do
 	if [ -e $file ]; then
-		sysctl -p $file
+		/sbin/sysctl -p $file
  	fi
 done 

@@ -4,7 +4,7 @@
 
 #!/usr/bin/env ash
 . /etc/bismark/bismark.conf
-. "$BROOT"/etc/bismark/bismark-active.conf
+. /etc/bismark/bismark-active.conf
 . /usr/lib/bismark/functions.inc.sh
 
 utime=`awk -F'[ .]' '{print $1}' /proc/uptime`
