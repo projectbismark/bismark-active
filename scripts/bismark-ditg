@@ -44,7 +44,7 @@ tcp)
 	case $4 in
 	up)  
 		/usr/bin/ITGSend -a $2 -rp 0 -T TCP -c $pkt_size -C $pkt_rate -t ${5}000 -x /tmp/${DEVICE_ID}_$tstamp.log  >/dev/null 2>&1 
-		echo "log /tmp/${DEVICE_ID}_$tstamp.log" | nc -n $2 $3 | awk "$filter"
+		echo "log /tmp/${DEVICE_ID}_$tstamp.log" | nc -w 3 -nc $2 $3 | awk "$filter"
 		cat bitrate.txt | "$BROOT"/usr/bin/bismark-mstats BITRATE DITG $src $2 $4 | grep -v nan
 	;;
 	dw)
@@ -65,7 +65,7 @@ udp)
 	case $4 in
 	up)  
 		/usr/bin/ITGSend -a $2 -rp 0 -T UDP -c $pkt_size -C $pkt_rate -t ${5}000 -x /tmp/${DEVICE_ID}_$tstamp.log  >/dev/null 2>&1
-		echo "log /tmp/${DEVICE_ID}_$tstamp.log" | nc -n $2 $3 | awk "$filter"
+		echo "log /tmp/${DEVICE_ID}_$tstamp.log" | nc -w 3 -nc $2 $3 | awk "$filter"
 		cat jitter.txt | "$BROOT"/usr/bin/bismark-mstats JITTER DITG $src $2 $4 | grep -v nan
 		awk '{ print $1/'$pkt_rate' }' packetloss.txt | "$BROOT"/usr/bin/bismark-mstats PKTLOSS DITG $src $2 $4
 	;;
@@ -89,7 +89,7 @@ udpflood)
 	case $4 in
 	up)  
 		/usr/bin/ITGSend -a $2 -rp 0 -T UDP -c $pkt_size -C $pkt_rate -t ${5}000 -x /tmp/${DEVICE_ID}_$tstamp.log  >/dev/null 2>&1 
-		echo "log /tmp/${DEVICE_ID}_$tstamp.log" | nc -n $2 $3 | awk "$filter"
+		echo "log /tmp/${DEVICE_ID}_$tstamp.log" | nc -w 3 -nc $2 $3 | awk "$filter"
 		cat bitrate.txt | "$BROOT"/usr/bin/bismark-mstats UDPBITRATE DITG $src $2 $4 | grep -v nan
 	;;
 	dw)
