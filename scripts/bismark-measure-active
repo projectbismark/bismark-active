@@ -24,6 +24,76 @@ msg ()
 	sleep 3
 }
 
+#get ping type based on signature
+get_ping_ver ()
+{
+  ping -c 1 127.0.0.1 > /tmp/ping.out
+  if grep -q "round-trip min/avg/max " /tmp/ping.out; then
+    pingver="OW"
+  elif grep -q "rtt min/avg/max/mdev " /tmp/ping.out; then
+    pingver="PI"
+  fi
+  rm -f /tmp/ping.out
+  [ $pingver ] || return 1
+}
+
+#get and generate a cache for the lowest latency target 
+#input: /tmp/bismark/mservers.list
+#output: /tmp/bismark/mservers.cache
+#output: result_ip
+get_target_cache ()
+{
+  result_name=""
+  result_val=2000
+  retult_ip=""
+  day1=$(date +%d)
+  day2=0
+  if [ -s /tmp/bismark/mservers.list ];
+  then
+    [ -f "/tmp/bismark/mservers.cache" ] && day2=$(ls -lh /tmp/bismark/mservers.cache | awk '{ print $7 }' 2>/dev/null)
+    [ $day2 -lt 10 ]; day2=0$day2
+    if [ $day1 -eq $day2 ];
+    then
+      #echo "OK"
+      read result_ip result_name < /tmp/bismark/mservers.cache
+      #echo $result_ip $result_name
+    else
+      # generate cache
+      while read line; do
+        ip=$(echo $line | awk '{ print $1 }')
+        if get_ping_ver; then
+          case $pingver in
+            OW)
+              result1=$(ping -c 3 $ip | grep min/avg/max | awk -F"\/" '{print $4}' )
+            ;;
+            PI)
+              result1=$(ping -c 3 $ip | grep min/avg/max | awk -F"\/" '{print $5}' )
+            ;;
+            *) result1=2000 ;;
+          esac
+        else
+          echo "WARNING: no recognizable ping output "
+          exit 1
+        fi
+        is_lower=$(awk -v x=$result1 -v y=$result_val 'BEGIN { print (x < y) }')
+        if [ $is_lower -eq 1 ];
+        then
+          result_name=$(echo $line | awk '{ print $3 }')
+          result_val=$result1
+          result_ip=$ip
+        fi
+      done </tmp/bismark/mservers.list
+      #echo $result_val
+      echo $result_ip" "$result_name" "$result_val > /tmp/bismark/mservers.cache
+    fi
+  else
+    echo "WARNING: Invalid mservers.list"
+    return 0
+  fi
+  [ $result_ip ] || return 1
+}
+
+
 # Get target info
 # $1 = category
 # $2 = type
@@ -46,6 +116,13 @@ get_target ()
 
 	# Get reply
 	read dst info wait < $MEASURE_REPLY 
+	ping -c 3 $dst 2>&1 >/dev/null
+        if [ "$?" -ne "0" ];
+        then
+           if get_target_cache; then
+              dst=$result_ip
+           fi
+        fi
 	[ $dst ] || return 1 
 }
 
