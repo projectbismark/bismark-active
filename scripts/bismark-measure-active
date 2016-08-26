@@ -75,16 +75,17 @@ get_target_cache ()
           echo "WARNING: no recognizable ping output "
           exit 1
         fi
-        is_lower=$(awk -v x=$result1 -v y=$result_val 'BEGIN { print (x < y) }')
-        if [ $is_lower -eq 1 ];
-        then
-          result_name=$(echo $line | awk '{ print $3 }')
-          result_val=$result1
-          result_ip=$ip
+        if [ ! -z $result1 ]; then
+          is_lower=$(awk -v x=$result1 -v y=$result_val 'BEGIN { print (x < y) }')
+          if [ $is_lower -eq 1 ]; then
+            result_name=$(echo $line | awk '{ print $3 }')
+            result_val=$result1
+            result_ip=$ip
+          fi
         fi
       done </tmp/bismark/mservers.list
       #echo $result_val
-      echo $result_ip" "$result_name" "$result_val > /tmp/bismark/mservers.cache
+      [ ! -z $result1 ] && echo $result_ip" "$result_name" "$result_val > /tmp/bismark/mservers.cache
     fi
   else
     echo "WARNING: Invalid mservers.list"
